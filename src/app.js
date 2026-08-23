@@ -13,6 +13,9 @@ const env = require('./config/env');
 
 const app = express();
 
+// Trust first proxy (required behind Render/Heroku reverse proxies)
+app.set('trust proxy', 1);
+
 // ─── Security Middleware ────────────────────────────────────────────────────
 app.use(helmet({
   contentSecurityPolicy: {
