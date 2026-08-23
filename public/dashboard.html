@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard - TaskFlow</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="main-content">
+      <header class="topbar" id="topbar"></header>
+      <div class="page-content">
+        <div class="stats-grid" id="statsGrid">
+          <div class="stat-card"><div class="stat-icon blue">📋</div><div class="stat-value" id="totalTasks">0</div><div class="stat-label">Total Tasks</div></div>
+          <div class="stat-card"><div class="stat-icon green">✅</div><div class="stat-value" id="completedTasks">0</div><div class="stat-label">Completed</div></div>
+          <div class="stat-card"><div class="stat-icon yellow">⏳</div><div class="stat-value" id="pendingTasks">0</div><div class="stat-label">Pending</div></div>
+          <div class="stat-card"><div class="stat-icon purple">🔄</div><div class="stat-value" id="inProgressTasks">0</div><div class="stat-label">In Progress</div></div>
+          <div class="stat-card"><div class="stat-icon red">⚠️</div><div class="stat-value" id="overdueTasks">0</div><div class="stat-label">Overdue</div></div>
+        </div>
+
+        <div class="charts-grid">
+          <div class="chart-container"><h3>Tasks by Status</h3><canvas id="statusChart"></canvas></div>
+          <div class="chart-container"><h3>Tasks by Priority</h3><canvas id="priorityChart"></canvas></div>
+          <div class="chart-container"><h3>Weekly Completed Tasks</h3><canvas id="weeklyChart"></canvas></div>
+          <div class="chart-container"><h3>Completion Rate</h3><canvas id="completionChart"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="toast-container"></div>
+  <script src="/js/api.js"></script>
+  <script>
+    if (!requireAuth()) throw new Error('Not authenticated');
+    initTheme();
+    document.getElementById('sidebar').innerHTML = renderSidebar('dashboard');
+    document.getElementById('topbar').innerHTML = renderTopbar('dashboard');
+    ensureSidebarOverlay();
+    updateNotifCount();
+
+    let statusChart, priorityChart, weeklyChart, completionChart;
+
+    async function loadDashboard() {
+      try {
+        const result = await api.getDashboardStats();
+        const s = result.data.stats;
+
+        document.getElementById('totalTasks').textContent = s.totalTasks;
+        document.getElementById('completedTasks').textContent = s.completedTasks;
+        document.getElementById('pendingTasks').textContent = s.pendingTasks;
+        document.getElementById('inProgressTasks').textContent = s.inProgressTasks;
+        document.getElementById('overdueTasks').textContent = s.overdueTasks;
+
+        const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text').trim();
+        const borderColor = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
+
+        // Status Chart
+        const statusCtx = document.getElementById('statusChart').getContext('2d');
+        statusChart = new Chart(statusCtx, {
+          type: 'doughnut',
+          data: {
+            labels: ['TODO', 'In Progress', 'Completed', 'Cancelled'],
+            datasets: [{
+              data: [s.statusBreakdown.TODO || 0, s.statusBreakdown.IN_PROGRESS || 0, s.statusBreakdown.COMPLETED || 0, s.statusBreakdown.CANCELLED || 0],
+              backgroundColor: ['#3b82f6', '#f59e0b', '#22c55e', '#ef4444'],
+            }],
+          },
+          options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { color: textColor } } } },
+        });
+
+        // Priority Chart
+        const priorityCtx = document.getElementById('priorityChart').getContext('2d');
+        priorityChart = new Chart(priorityCtx, {
+          type: 'bar',
+          data: {
+            labels: ['Low', 'Medium', 'High', 'Urgent'],
+            datasets: [{
+              label: 'Tasks',
+              data: [s.priorityBreakdown.LOW || 0, s.priorityBreakdown.MEDIUM || 0, s.priorityBreakdown.HIGH || 0, s.priorityBreakdown.URGENT || 0],
+              backgroundColor: ['#22c55e', '#f59e0b', '#f97316', '#ef4444'],
+            }],
+          },
+          options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: textColor } }, y: { ticks: { color: textColor, stepSize: 1 }, grid: { color: borderColor } } } },
+        });
+
+        // Weekly Chart
+        const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const weeklyData = new Array(7).fill(0);
+        s.weeklyCompleted.forEach((w) => { weeklyData[w._id - 1] = w.count; });
+        const weeklyCtx = document.getElementById('weeklyChart').getContext('2d');
+        weeklyChart = new Chart(weeklyCtx, {
+          type: 'line',
+          data: {
+            labels: dayLabels,
+            datasets: [{ label: 'Completed', data: weeklyData, borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,0.1)', fill: true, tension: 0.4 }],
+          },
+          options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: textColor } }, y: { ticks: { color: textColor, stepSize: 1 }, grid: { color: borderColor } } } },
+        });
+
+        // Completion Rate
+        const completionCtx = document.getElementById('completionChart').getContext('2d');
+        completionChart = new Chart(completionCtx, {
+          type: 'doughnut',
+          data: {
+            labels: ['Completed', 'Remaining'],
+            datasets: [{
+              data: [s.completionPercentage, 100 - s.completionPercentage],
+              backgroundColor: ['#22c55e', '#e2e8f0'],
+            }],
+          },
+          options: { responsive: true, cutout: '70%', plugins: { legend: { position: 'bottom', labels: { color: textColor } } } },
+        });
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    loadDashboard();
+  </script>
+</body>
+</html>

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Notifications - TaskFlow</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="main-content">
+      <header class="topbar" id="topbar"></header>
+      <div class="page-content">
+        <div class="flex-between mb-20">
+          <h2 style="font-size:1rem;color:var(--text-secondary)" id="notifInfo"></h2>
+          <button class="btn btn-outline" onclick="markAllRead()">Mark All as Read</button>
+        </div>
+        <div class="card" id="notifList">
+          <div class="loading-overlay"><span class="loading-spinner"></span></div>
+        </div>
+        <div class="pagination" id="pagination"></div>
+      </div>
+    </div>
+  </div>
+  <div class="toast-container"></div>
+  <script src="/js/api.js"></script>
+  <script>
+    if (!requireAuth()) throw new Error('Not authenticated');
+    initTheme();
+    document.getElementById('sidebar').innerHTML = renderSidebar('notifications');
+    document.getElementById('topbar').innerHTML = renderTopbar('notifications');
+    ensureSidebarOverlay();
+
+    let currentPage = 1;
+
+    async function loadNotifications(page = 1) {
+      currentPage = page;
+      const container = document.getElementById('notifList');
+      container.innerHTML = '<div class="loading-overlay"><span class="loading-spinner"></span></div>';
+
+      try {
+        const result = await api.getNotifications({ page, limit: 20 });
+        const notifs = result.data;
+        const pag = result.pagination;
+        document.getElementById('notifInfo').textContent = `${result.unreadCount} unread · ${pag.total} total`;
+
+        if (notifs.length === 0) {
+          container.innerHTML = '<div class="empty-state"><div class="empty-icon">🔔</div><h3>No notifications</h3><p>You are all caught up!</p></div>';
+        } else {
+          container.innerHTML = notifs.map(n => `
+            <div class="notification-item ${n.isRead ? '' : 'unread'}" onclick="markRead('${n._id}', this)">
+              <div>${escapeHtml(n.message)}</div>
+              <div class="notif-time">${timeAgo(n.createdAt)} · ${n.type.replace(/_/g, ' ')}</div>
+            </div>
+          `).join('');
+        }
+
+        const pagDiv = document.getElementById('pagination');
+        if (pag.totalPages <= 1) { pagDiv.innerHTML = ''; return; }
+        let html = `<button ${pag.page<=1?'disabled':''} onclick="loadNotifications(${pag.page-1})">‹ Prev</button>`;
+        for (let i=1; i<=pag.totalPages; i++) { html += `<button class="${i===pag.page?'active':''}" onclick="loadNotifications(${i})">${i}</button>`; }
+        html += `<button ${pag.page>=pag.totalPages?'disabled':''} onclick="loadNotifications(${pag.page+1})">Next ›</button>`;
+        pagDiv.innerHTML = html;
+      } catch (err) {
+        container.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${escapeHtml(err.message)}</p></div>`;
+      }
+    }
+
+    async function markRead(id, el) {
+      try {
+        await api.markNotificationRead(id);
+        el.classList.remove('unread');
+        const badge = document.getElementById('notifCount');
+        const current = parseInt(badge.textContent) || 0;
+        if (current > 1) badge.textContent = current - 1;
+        else if (badge.style.display === 'flex') { badge.style.display = 'none'; }
+      } catch { /* ignore */ }
+    }
+
+    async function markAllRead() {
+      try {
+        await api.markAllNotificationsRead();
+        showToast('All notifications marked as read', 'success');
+        const badge = document.getElementById('notifCount');
+        if (badge) badge.style.display = 'none';
+        loadNotifications(currentPage);
+      }
+      catch (err) { showToast(err.message, 'error'); }
+    }
+
+    loadNotifications();
+  </script>
+</body>
+</html>
