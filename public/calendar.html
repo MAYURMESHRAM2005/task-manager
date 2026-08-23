@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calendar - TaskFlow</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="main-content">
+      <header class="topbar" id="topbar"></header>
+      <div class="page-content">
+        <div class="flex-between mb-20">
+          <div style="display:flex;align-items:center;gap:12px">
+            <button class="btn btn-outline btn-sm" onclick="changeMonth(-1)">‹ Prev</button>
+            <h2 id="monthLabel" style="font-size:1.1rem;min-width:180px;text-align:center"></h2>
+            <button class="btn btn-outline btn-sm" onclick="changeMonth(1)">Next ›</button>
+            <button class="btn btn-sm btn-outline" onclick="goToday()">Today</button>
+          </div>
+          <button class="btn btn-primary" onclick="openCreateModal()">+ New Task</button>
+        </div>
+
+        <div class="card" style="padding:0;overflow:hidden">
+          <div class="calendar-grid" id="calendarGrid"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Task Modal -->
+  <div class="modal-overlay" id="taskModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title">New Task</h3>
+        <button class="modal-close" onclick="hideModal('taskModal')">&times;</button>
+      </div>
+      <form id="taskForm">
+        <div class="form-group">
+          <label>Title *</label>
+          <input type="text" id="taskTitle" class="form-control" placeholder="Task title" required minlength="2">
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <textarea id="taskDescription" class="form-control" rows="2"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Due Date *</label>
+            <input type="date" id="taskDueDate" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label>Priority</label>
+            <select id="taskPriority" class="form-control">
+              <option value="MEDIUM">Medium</option>
+              <option value="LOW">Low</option>
+              <option value="HIGH">High</option>
+              <option value="URGENT">Urgent</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Project</label>
+          <select id="taskProject" class="form-control"><option value="">No Project</option></select>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="hideModal('taskModal')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Task</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="toast-container"></div>
+  <script src="/js/api.js"></script>
+  <script>
+    if (!requireAuth()) throw new Error('Not authenticated');
+    initTheme();
+    document.getElementById('sidebar').innerHTML = renderSidebar('calendar');
+    document.getElementById('topbar').innerHTML = renderTopbar('calendar');
+    ensureSidebarOverlay();
+    updateNotifCount();
+
+    let currentDate = new Date();
+    let calendarTasks = [];
+
+    function changeMonth(delta) {
+      currentDate.setMonth(currentDate.getMonth() + delta);
+      loadCalendar();
+    }
+
+    function goToday() {
+      currentDate = new Date();
+      loadCalendar();
+    }
+
+    async function loadCalendar() {
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+
+      document.getElementById('monthLabel').textContent =
+        currentDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+
+      // Get start/end range (include padding days)
+      const startPad = firstDay.getDay();
+      const startDate = new Date(firstDay);
+      startDate.setDate(startDate.getDate() - startPad);
+      const endPad = 6 - lastDay.getDay();
+      const endDate = new Date(lastDay);
+      endDate.setDate(endDate.getDate() + endPad);
+      endDate.setHours(23, 59, 59);
+
+      try {
+        const result = await api.getCalendarData({
+          dateFrom: startDate.toISOString(),
+          dateTo: endDate.toISOString(),
+        });
+        calendarTasks = result.data || [];
+        renderCalendar(year, month, startDate, endDate);
+      } catch (err) {
+        document.getElementById('calendarGrid').innerHTML = `<div class="empty-state" style="grid-column:1/-1"><h3>Error</h3><p>${escapeHtml(err.message)}</p></div>`;
+      }
+    }
+
+    function renderCalendar(year, month, startDate, endDate) {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
+      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+      let html = days.map(d => `<div class="calendar-header-cell">${d}</div>`).join('');
+
+      const current = new Date(startDate);
+      while (current <= endDate) {
+        const dateStr = current.toISOString().split('T')[0];
+        const isToday = dateStr === todayStr;
+        const isOtherMonth = current.getMonth() !== month;
+
+        const dayTasks = calendarTasks.filter(t => {
+          if (!t.dueDate) return false;
+          return t.dueDate.split('T')[0] === dateStr;
+        });
+
+        html += `
+          <div class="calendar-cell ${isToday ? 'today' : ''} ${isOtherMonth ? 'other-month' : ''}"
+               onclick="createTaskForDate('${dateStr}')">
+            <div class="calendar-date">${current.getDate()}</div>
+            ${dayTasks.slice(0, 3).map(t => `
+              <div class="calendar-event ${t.status.toLowerCase().replace('_', '-')}" title="${escapeHtml(t.title)}">
+                ${escapeHtml(t.title)}
+              </div>
+            `).join('')}
+            ${dayTasks.length > 3 ? `<div style="font-size:0.68rem;color:var(--text-secondary)">+${dayTasks.length - 3} more</div>` : ''}
+          </div>
+        `;
+        current.setDate(current.getDate() + 1);
+      }
+
+      document.getElementById('calendarGrid').innerHTML = html;
+    }
+
+    function createTaskForDate(dateStr) {
+      document.getElementById('taskDueDate').value = dateStr;
+      showModal('taskModal');
+    }
+
+    async function loadProjects() {
+      try {
+        const result = await api.getProjects({ limit: 100 });
+        const select = document.getElementById('taskProject');
+        (result.data || []).forEach(p => {
+          select.innerHTML += `<option value="${p._id}">${escapeHtml(p.name)}</option>`;
+        });
+      } catch { /* ignore */ }
+    }
+
+    function openCreateModal() {
+      document.getElementById('taskForm').reset();
+      const today = new Date().toISOString().split('T')[0];
+      document.getElementById('taskDueDate').value = today;
+      showModal('taskModal');
+    }
+
+    document.getElementById('taskForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const data = {
+          title: document.getElementById('taskTitle').value.trim(),
+          description: document.getElementById('taskDescription').value.trim(),
+          dueDate: document.getElementById('taskDueDate').value,
+          priority: document.getElementById('taskPriority').value,
+          project: document.getElementById('taskProject').value || null,
+        };
+        await api.createTask(data);
+        showToast('Task created', 'success');
+        hideModal('taskModal');
+        loadCalendar();
+      } catch (err) { showToast(err.message, 'error'); }
+    });
+
+    loadProjects().then(() => loadCalendar());
+  </script>
+</body>
+</html>

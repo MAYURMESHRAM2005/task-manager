@@ -9,6 +9,8 @@ const teamRoutes = require('./teamRoutes');
 const commentRoutes = require('./commentRoutes');
 const notificationRoutes = require('./notificationRoutes');
 const adminRoutes = require('./adminRoutes');
+const attachmentRoutes = require('./attachmentRoutes');
+const activityRoutes = require('./activityRoutes');
 
 const { checkDBHealth } = require('../config/database');
 const env = require('../config/env');
@@ -21,6 +23,8 @@ router.use('/projects', projectRoutes);
 router.use('/teams', teamRoutes);
 router.use('/comments', commentRoutes);
 router.use('/notifications', notificationRoutes);
+router.use('/attachments', attachmentRoutes);
+router.use('/activity', activityRoutes);
 router.use('/admin', adminRoutes);
 
 // Health check endpoints

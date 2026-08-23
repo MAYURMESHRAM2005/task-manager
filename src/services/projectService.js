@@ -4,6 +4,35 @@ const Notification = require('../models/Notification');
 const { AppError } = require('../middleware/errorHandler');
 
 /**
+ * Compute project health score (0-100)
+ * Factors: completion rate, overdue ratio, activity recency
+ */
+const computeHealthScore = (taskStats) => {
+  const { total, completed, overdue, inProgress, todo } = taskStats;
+
+  if (total === 0) return { score: 100, label: 'No Tasks', color: '#94a3b8' };
+
+  const completionRate = completed / total;
+  const overdueRate = total > 0 ? overdue / total : 0;
+  const activeRate = total > 0 ? (inProgress + completed) / total : 0;
+
+  // Weighted score: 50% completion, 30% no-overdue, 20% activity
+  const score = Math.round(
+    (completionRate * 50) +
+    ((1 - overdueRate) * 30) +
+    (activeRate * 20)
+  );
+
+  let label, color;
+  if (score >= 80) { label = 'Healthy'; color = '#22c55e'; }
+  else if (score >= 60) { label = 'On Track'; color = '#f59e0b'; }
+  else if (score >= 40) { label = 'At Risk'; color = '#f97316'; }
+  else { label = 'Needs Attention'; color = '#ef4444'; }
+
+  return { score, label, color };
+};
+
+/**
  * Create a new project
  */
 const createProject = async (projectData, userId) => {
@@ -20,7 +49,7 @@ const createProject = async (projectData, userId) => {
 };
 
 /**
- * Get projects with pagination
+ * Get projects with pagination and health scores
  */
 const getProjects = async (pagination, userId, userRole) => {
   let query = {};
@@ -39,10 +68,10 @@ const getProjects = async (pagination, userId, userRole) => {
     .skip((pagination.page - 1) * pagination.limit)
     .limit(pagination.limit);
 
-  // Add task stats for each project
+  // Add task stats and health score for each project
   const projectsWithStats = await Promise.all(
     projects.map(async (project) => {
-      const taskStats = await Task.aggregate([
+      const taskStatsRaw = await Task.aggregate([
         { $match: { project: project._id } },
         {
           $group: {
@@ -52,16 +81,33 @@ const getProjects = async (pagination, userId, userRole) => {
         },
       ]);
 
-      const totalTasks = taskStats.reduce((acc, s) => acc + s.count, 0);
-      const completedTasks = taskStats.find((s) => s._id === 'COMPLETED')?.count || 0;
+      const totalTasks = taskStatsRaw.reduce((acc, s) => acc + s.count, 0);
+      const completedTasks = taskStatsRaw.find((s) => s._id === 'COMPLETED')?.count || 0;
+      const overdueTasks = await Task.countDocuments({
+        project: project._id,
+        dueDate: { $lt: new Date(), $ne: null },
+        status: { $in: ['TODO', 'IN_PROGRESS'] },
+      });
+      const inProgressTasks = taskStatsRaw.find((s) => s._id === 'IN_PROGRESS')?.count || 0;
+      const todoTasks = taskStatsRaw.find((s) => s._id === 'TODO')?.count || 0;
+
+      const health = computeHealthScore({
+        total: totalTasks,
+        completed: completedTasks,
+        overdue: overdueTasks,
+        inProgress: inProgressTasks,
+        todo: todoTasks,
+      });
 
       return {
         ...project.toJSON(),
         taskStats: {
           total: totalTasks,
           completed: completedTasks,
+          overdue: overdueTasks,
           completionPercentage: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
         },
+        health,
       };
     })
   );
@@ -90,22 +136,39 @@ const getProjectById = async (projectId) => {
   }
 
   // Get task stats
-  const taskStats = await Task.aggregate([
+  const taskStatsRaw = await Task.aggregate([
     { $match: { project: project._id } },
     { $group: { _id: '$status', count: { $sum: 1 } } },
   ]);
 
-  const totalTasks = taskStats.reduce((acc, s) => acc + s.count, 0);
-  const completedTasks = taskStats.find((s) => s._id === 'COMPLETED')?.count || 0;
+  const totalTasks = taskStatsRaw.reduce((acc, s) => acc + s.count, 0);
+  const completedTasks = taskStatsRaw.find((s) => s._id === 'COMPLETED')?.count || 0;
+  const overdueTasks = await Task.countDocuments({
+    project: project._id,
+    dueDate: { $lt: new Date(), $ne: null },
+    status: { $in: ['TODO', 'IN_PROGRESS'] },
+  });
+  const inProgressTasks = taskStatsRaw.find((s) => s._id === 'IN_PROGRESS')?.count || 0;
+  const todoTasks = taskStatsRaw.find((s) => s._id === 'TODO')?.count || 0;
+
+  const health = computeHealthScore({
+    total: totalTasks,
+    completed: completedTasks,
+    overdue: overdueTasks,
+    inProgress: inProgressTasks,
+    todo: todoTasks,
+  });
 
   return {
     ...project.toJSON(),
     taskStats: {
       total: totalTasks,
       completed: completedTasks,
+      overdue: overdueTasks,
       completionPercentage: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
-      breakdown: taskStats.reduce((acc, s) => { acc[s._id] = s.count; return acc; }, {}),
+      breakdown: taskStatsRaw.reduce((acc, s) => { acc[s._id] = s.count; return acc; }, {}),
     },
+    health,
   };
 };
 

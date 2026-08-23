@@ -13,7 +13,7 @@ const validateCreateTask = (req, res, next) => {
   if (req.body.description && req.body.description.length > 2000) {
     errors.push('Description cannot exceed 2000 characters');
   }
-  if (req.body.status && !['TODO', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'].includes(req.body.status)) {
+  if (req.body.status && !['TODO', 'IN_PROGRESS', 'REVIEW', 'COMPLETED', 'CANCELLED'].includes(req.body.status)) {
     errors.push('Invalid status value');
   }
   if (req.body.priority && !['LOW', 'MEDIUM', 'HIGH', 'URGENT'].includes(req.body.priority)) {
@@ -33,6 +33,12 @@ const validateCreateTask = (req, res, next) => {
   }
   if (req.body.reminderAt && new Date(req.body.reminderAt) < new Date()) {
     errors.push('Reminder date must be in the future');
+  }
+  if (req.body.labels && !Array.isArray(req.body.labels)) {
+    errors.push('Labels must be an array');
+  }
+  if (req.body.dependsOn && !Array.isArray(req.body.dependsOn)) {
+    errors.push('Dependencies must be an array');
   }
 
   if (errors.length > 0) {
@@ -55,7 +61,7 @@ const validateUpdateTask = (req, res, next) => {
   if (req.body.title !== undefined && req.body.title.trim().length > 200) {
     errors.push('Title cannot exceed 200 characters');
   }
-  if (req.body.status && !['TODO', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'].includes(req.body.status)) {
+  if (req.body.status && !['TODO', 'IN_PROGRESS', 'REVIEW', 'COMPLETED', 'CANCELLED'].includes(req.body.status)) {
     errors.push('Invalid status value');
   }
   if (req.body.priority && !['LOW', 'MEDIUM', 'HIGH', 'URGENT'].includes(req.body.priority)) {
@@ -73,6 +79,12 @@ const validateUpdateTask = (req, res, next) => {
   if (req.body.reminderAt !== undefined && req.body.reminderAt !== null && isNaN(new Date(req.body.reminderAt).getTime())) {
     errors.push('Invalid reminder date');
   }
+  if (req.body.labels && !Array.isArray(req.body.labels)) {
+    errors.push('Labels must be an array');
+  }
+  if (req.body.dependsOn && !Array.isArray(req.body.dependsOn)) {
+    errors.push('Dependencies must be an array');
+  }
 
   if (errors.length > 0) {
     return res.status(422).json({
@@ -85,4 +97,27 @@ const validateUpdateTask = (req, res, next) => {
   next();
 };
 
-module.exports = { validateCreateTask, validateUpdateTask };
+const validateReorderTasks = (req, res, next) => {
+  const { updates } = req.body;
+  if (!updates || !Array.isArray(updates)) {
+    return res.status(422).json({
+      success: false,
+      message: 'updates must be an array of { taskId, status, position }',
+      error: { code: 'VALIDATION_ERROR' },
+    });
+  }
+
+  for (const update of updates) {
+    if (!update.taskId || !mongoose.Types.ObjectId.isValid(update.taskId)) {
+      return res.status(422).json({
+        success: false,
+        message: 'Each update must have a valid taskId',
+        error: { code: 'VALIDATION_ERROR' },
+      });
+    }
+  }
+
+  next();
+};
+
+module.exports = { validateCreateTask, validateUpdateTask, validateReorderTasks };

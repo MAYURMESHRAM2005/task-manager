@@ -142,10 +142,12 @@
   </div>
 
   <div class="toast-container"></div>
+  <script src="/socket.io/socket.io.js"></script>
   <script src="/js/api.js"></script>
   <script>
     if (!requireAuth()) throw new Error('Not authenticated');
     initTheme();
+    initSocket();
     document.getElementById('sidebar').innerHTML = renderSidebar('tasks');
     document.getElementById('topbar').innerHTML = renderTopbar('tasks');
     ensureSidebarOverlay();

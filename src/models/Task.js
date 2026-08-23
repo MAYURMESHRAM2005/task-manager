@@ -17,7 +17,7 @@ const taskSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['TODO', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'],
+      enum: ['TODO', 'IN_PROGRESS', 'REVIEW', 'COMPLETED', 'CANCELLED'],
       default: 'TODO',
     },
     priority: {
@@ -30,6 +30,10 @@ const taskSchema = new mongoose.Schema(
       trim: true,
       maxlength: [50, 'Category cannot exceed 50 characters'],
       default: '',
+    },
+    labels: {
+      type: [String],
+      default: [],
     },
     dueDate: {
       type: Date,
@@ -62,6 +66,47 @@ const taskSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Kanban ordering
+    position: {
+      type: Number,
+      default: 0,
+    },
+    // Task dependencies
+    dependsOn: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: 'Task',
+      default: [],
+    },
+    // Recurring task
+    recurrence: {
+      type: {
+        frequency: {
+          type: String,
+          enum: ['none', 'daily', 'weekly', 'monthly', 'yearly'],
+          default: 'none',
+        },
+        interval: {
+          type: Number,
+          default: 1,
+          min: 1,
+        },
+        endDate: {
+          type: Date,
+          default: null,
+        },
+      },
+      default: { frequency: 'none', interval: 1, endDate: null },
+    },
+    nextRecurrenceAt: {
+      type: Date,
+      default: null,
+    },
+    // Mentions
+    mentions: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: 'User',
+      default: [],
+    },
   },
   {
     timestamps: true,
@@ -79,6 +124,8 @@ taskSchema.index({ status: 1, priority: 1 });
 taskSchema.index({ assignedTo: 1, status: 1 });
 taskSchema.index({ title: 'text', description: 'text' });
 taskSchema.index({ reminderAt: 1, reminderNotified: 1 });
+taskSchema.index({ project: 1, status: 1, position: 1 });
+taskSchema.index({ dueDate: 1, status: 1 });
 
 // Set completedAt when status changes to COMPLETED
 taskSchema.pre('save', function (next) {

@@ -1,5 +1,6 @@
 const Task = require('../models/Task');
 const Notification = require('../models/Notification');
+const { emitToUser } = require('./socketService');
 
 const CHECK_INTERVAL_MS = 60 * 1000; // Check every 60 seconds
 let intervalId = null;
@@ -33,11 +34,20 @@ const checkReminders = async () => {
       });
 
       if (!existing) {
-        await Notification.create({
+        const notification = await Notification.create({
           user: notifyUserId,
           type: 'TASK_REMINDER',
-          message: `⏰ Reminder: Task "${task.title}" was set to remind you now`,
+          message: `⏰ Reminder: Task "${task.title}" is due now`,
           relatedEntity: { type: 'Task', id: task._id },
+        });
+
+        // Real-time push via Socket.IO
+        emitToUser(notifyUserId, 'notification', {
+          type: 'TASK_REMINDER',
+          message: notification.message,
+          entityType: 'Task',
+          entityId: task._id,
+          timestamp: notification.createdAt,
         });
       }
 

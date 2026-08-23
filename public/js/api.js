@@ -50,7 +50,6 @@ const api = {
     try {
       const response = await fetch(`${API_BASE}${endpoint}`, config);
 
-      // Handle token expiry
       if (response.status === 401 && !isRetry) {
         const body = await response.clone().json().catch(() => ({}));
         if (body.error?.code === 'TOKEN_EXPIRED' && this.getRefreshToken()) {
@@ -147,6 +146,25 @@ const api = {
   async assignTask(id, assignedTo) { return this.request('PATCH', `/tasks/${id}/assign`, { assignedTo }); },
   async getDashboardStats() { return this.request('GET', '/tasks/dashboard/stats'); },
 
+  // ── Kanban ─────────────────────────────────────────────────────────────
+  async getKanbanBoard(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this.request('GET', `/tasks/kanban?${qs}`);
+  },
+  async reorderTasks(updates) { return this.request('PATCH', '/tasks/reorder', { updates }); },
+
+  // ── Calendar ───────────────────────────────────────────────────────────
+  async getCalendarData(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this.request('GET', `/tasks/calendar?${qs}`);
+  },
+
+  // ── Subtasks ───────────────────────────────────────────────────────────
+  async getSubtasks(taskId) { return this.request('GET', `/tasks/${taskId}/subtasks`); },
+  async createSubtask(taskId, data) { return this.request('POST', `/tasks/${taskId}/subtasks`, data); },
+  async updateSubtask(subtaskId, data) { return this.request('PUT', `/tasks/subtasks/${subtaskId}`, data); },
+  async deleteSubtask(subtaskId) { return this.request('DELETE', `/tasks/subtasks/${subtaskId}`); },
+
   // ── Projects ───────────────────────────────────────────────────────────
   async getProjects(params = {}) {
     const qs = new URLSearchParams(params).toString();
@@ -199,7 +217,68 @@ const api = {
   // ── Health ─────────────────────────────────────────────────────────────
   async healthCheck() { return this.request('GET', '/health'); },
   async readinessCheck() { return this.request('GET', '/ready'); },
+
+  // ── Attachments ───────────────────────────────────────────────────────
+  async getAttachments(entityType, entityId) { return this.request('GET', `/attachments/${entityType}/${entityId}`); },
+  async uploadAttachment(entityType, entityId, file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const token = this.getToken();
+    const response = await fetch(`${API_BASE}/attachments/${entityType}/${entityId}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    return response.json();
+  },
+  async deleteAttachment(id) { return this.request('DELETE', `/attachments/${id}`); },
+
+  // ── Activity Feed ──────────────────────────────────────────────────────
+  async getProjectActivity(projectId, params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this.request('GET', `/activity/project/${projectId}?${qs}`);
+  },
+  async getMyActivity(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this.request('GET', `/activity/me?${qs}`);
+  },
 };
+
+// ─── Socket.IO Client ─────────────────────────────────────────────────────
+let socket = null;
+
+function initSocket() {
+  if (socket || !api.isAuthenticated()) return socket;
+  try {
+    socket = io({ auth: { token: api.getToken() }, transports: ['websocket', 'polling'] });
+    socket.on('connect', () => {
+      console.log('[Socket] Connected');
+    });
+    socket.on('disconnect', () => {
+      console.log('[Socket] Disconnected');
+    });
+    socket.on('notification', (data) => {
+      showToast(data.message, 'info');
+      updateNotifCount();
+    });
+    socket.on('connect_error', (err) => {
+      console.error('[Socket] Connection error:', err.message);
+    });
+    return socket;
+  } catch (e) {
+    console.error('[Socket] Init error:', e);
+    return null;
+  }
+}
+
+function getSocket() { return socket; }
+
+function disconnectSocket() {
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+}
 
 // ─── Toast Notifications ──────────────────────────────────────────────────
 function showToast(message, type = 'info') {
@@ -227,6 +306,68 @@ function toggleTheme() {
   const next = current === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', next);
   localStorage.setItem('taskflow_theme', next);
+  window.dispatchEvent(new CustomEvent('themechange', { detail: { theme: next } }));
+}
+
+// ─── Chart Theme ─────────────────────────────────────────────────────────
+function getChartTheme() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  if (isDark) {
+    return {
+      textColor: '#A3A3A3',
+      legendColor: '#E5E5E5',
+      gridColor: '#242424',
+      borderColor: '#333333',
+      axisColor: '#525252',
+      tooltipBg: '#0D0D0D',
+      tooltipBorder: '#333333',
+      tooltipTitle: '#FFFFFF',
+      tooltipBody: '#D4D4D4',
+      remainingColor: '#262626',
+    };
+  }
+  return {
+    textColor: getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#1e293b',
+    legendColor: getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#1e293b',
+    gridColor: getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#e2e8f0',
+    borderColor: getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#e2e8f0',
+    axisColor: '#e2e8f0',
+    tooltipBg: '#ffffff',
+    tooltipBorder: '#e2e8f0',
+    tooltipTitle: '#1e293b',
+    tooltipBody: '#475569',
+    remainingColor: '#e2e8f0',
+  };
+}
+
+function getChartScales(t) {
+  return {
+    x: {
+      ticks: { color: t.textColor },
+      grid: { color: t.gridColor },
+      border: { color: t.borderColor },
+    },
+    y: {
+      ticks: { color: t.textColor, stepSize: 1 },
+      grid: { color: t.gridColor },
+      border: { color: t.borderColor },
+    },
+  };
+}
+
+function getChartPlugins(t) {
+  return {
+    legend: {
+      labels: { color: t.legendColor, usePointStyle: true, padding: 16 },
+    },
+    tooltip: {
+      backgroundColor: t.tooltipBg,
+      titleColor: t.tooltipTitle,
+      bodyColor: t.tooltipBody,
+      borderColor: t.tooltipBorder,
+      borderWidth: 1,
+    },
+  };
 }
 
 // ─── Auth Guard ───────────────────────────────────────────────────────────
@@ -250,16 +391,19 @@ function redirectIfAuth() {
 function renderSidebar(activePage) {
   const user = api.getUser();
   const isAdmin = user?.role === 'ADMIN';
-  const isManager = user?.role === 'MANAGER' || isAdmin;
 
   const links = [
     { section: 'Main' },
     { href: '/dashboard', icon: '📊', label: 'Dashboard' },
-    { href: '/tasks', icon: '✅', label: 'Tasks' },
+    { href: '/tasks', icon: '✅', label: 'My Tasks' },
+    { href: '/kanban', icon: '📋', label: 'Kanban Board' },
+    { href: '/calendar', icon: '📅', label: 'Calendar' },
     { href: '/projects', icon: '📁', label: 'Projects' },
+    { section: 'Collaborate' },
     { href: '/teams', icon: '👥', label: 'Teams' },
-    { section: 'Account' },
     { href: '/notifications', icon: '🔔', label: 'Notifications' },
+    { section: 'Account' },
+    { href: '/analytics', icon: '📈', label: 'Analytics' },
     { href: '/profile', icon: '👤', label: 'Profile' },
     { href: '/settings', icon: '⚙️', label: 'Settings' },
   ];
@@ -347,35 +491,6 @@ function ensureSidebarOverlay() {
   }
 }
 
-// ─── Mobile Table Card Labels ────────────────────────────────────────────
-function applyMobileTableLabels(tbodySelector, columns) {
-  const isMobile = window.matchMedia('(max-width: 768px)').matches;
-  if (!isMobile) return;
-  const rows = document.querySelectorAll(`${tbodySelector} tr`);
-  rows.forEach((row) => {
-    const cells = row.querySelectorAll('td');
-    cells.forEach((cell, i) => {
-      if (columns[i]) cell.setAttribute('data-label', columns[i]);
-    });
-  });
-}
-
-async function handleLogout() {
-  try { await api.logout(); } catch { /* ignore */ }
-  window.location.href = '/login';
-}
-
-async function updateNotifCount() {
-  try {
-    const result = await api.getNotifications({ unread: 'true', limit: 1 });
-    const badge = document.getElementById('notifCount');
-    if (badge && result?.unreadCount > 0) {
-      badge.textContent = result.unreadCount > 9 ? '9+' : result.unreadCount;
-      badge.style.display = 'flex';
-    }
-  } catch { /* ignore */ }
-}
-
 // ─── Helpers ──────────────────────────────────────────────────────────────
 function formatDate(dateStr) {
   if (!dateStr) return '—';
@@ -399,7 +514,7 @@ function timeAgo(dateStr) {
 }
 
 function statusBadge(status) {
-  const map = { TODO: 'badge-todo', IN_PROGRESS: 'badge-progress', COMPLETED: 'badge-completed', CANCELLED: 'badge-cancelled' };
+  const map = { TODO: 'badge-todo', IN_PROGRESS: 'badge-progress', REVIEW: 'badge-progress', COMPLETED: 'badge-completed', CANCELLED: 'badge-cancelled' };
   return `<span class="badge ${map[status] || ''}">${status.replace('_', ' ')}</span>`;
 }
 
@@ -421,3 +536,43 @@ function escapeHtml(text) {
 
 function showModal(id) { document.getElementById(id)?.classList.add('active'); }
 function hideModal(id) { document.getElementById(id)?.classList.remove('active'); }
+
+async function handleLogout() {
+  try { await api.logout(); } catch { /* ignore */ }
+  window.location.href = '/login';
+}
+
+async function updateNotifCount() {
+  try {
+    const result = await api.getNotifications({ unread: 'true', limit: 1 });
+    const badge = document.getElementById('notifCount');
+    if (badge && result?.unreadCount > 0) {
+      badge.textContent = result.unreadCount > 9 ? '9+' : result.unreadCount;
+      badge.style.display = 'flex';
+    }
+  } catch { /* ignore */ }
+}
+
+function renderSkeleton(count = 3) {
+  let html = '';
+  for (let i = 0; i < count; i++) {
+    html += '<div class="skeleton skeleton-card mb-10"></div>';
+  }
+  return html;
+}
+
+function progressBar(percentage, colorClass = 'green') {
+  return `<div class="progress-bar"><div class="progress-fill ${colorClass}" style="width:${percentage}%"></div></div>`;
+}
+
+function scoreRing(percentage) {
+  const r = 42, c = 2 * Math.PI * r;
+  const offset = c - (percentage / 100) * c;
+  const color = percentage >= 80 ? '#22c55e' : percentage >= 60 ? '#f59e0b' : '#ef4444';
+  return `
+    <div class="score-ring">
+      <svg width="100" height="100"><circle cx="50" cy="50" r="${r}" fill="none" stroke="var(--border)" stroke-width="6"/><circle cx="50" cy="50" r="${r}" fill="none" stroke="${color}" stroke-width="6" stroke-dasharray="${c}" stroke-dashoffset="${offset}" stroke-linecap="round"/></svg>
+      <span class="score-ring-value">${percentage}%</span>
+    </div>
+  `;
+}

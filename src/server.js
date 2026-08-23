@@ -1,6 +1,10 @@
+const http = require('http');
 const app = require('./app');
 const { connectDB } = require('./config/database');
+const { initSocket } = require('./services/socketService');
 const { startReminderScheduler, stopReminderScheduler } = require('./services/reminderScheduler');
+const { startRecurringScheduler, stopRecurringScheduler } = require('./services/recurringTaskScheduler');
+const { startDueDateScheduler, stopDueDateScheduler } = require('./services/dueDateScheduler');
 const env = require('./config/env');
 
 const PORT = env.PORT || 3000;
@@ -10,19 +14,25 @@ const startServer = async () => {
     // Connect to MongoDB Atlas
     await connectDB();
 
+    // Create HTTP server and attach Socket.IO
+    const server = http.createServer(app);
+    initSocket(server);
+
     // Start Express server
-    const server = app.listen(PORT, () => {
+    server.listen(PORT, () => {
       if (env.NODE_ENV !== 'test') {
         console.log(`TaskFlow server running on port ${PORT}`);
         console.log(`Environment: ${env.NODE_ENV}`);
         console.log(`API: http://localhost:${PORT}/api/v1`);
         console.log(`Health: http://localhost:${PORT}/api/v1/health`);
-        console.log(`Ready: http://localhost:${PORT}/api/v1/ready`);
+        console.log(`Socket.IO: ws://localhost:${PORT}/socket.io`);
       }
     });
 
-    // Start reminder scheduler
+    // Start schedulers
     startReminderScheduler();
+    startRecurringScheduler();
+    startDueDateScheduler();
 
     // Graceful shutdown
     const shutdown = async (signal) => {
@@ -31,6 +41,8 @@ const startServer = async () => {
       }
       server.close(async () => {
         stopReminderScheduler();
+        stopRecurringScheduler();
+        stopDueDateScheduler();
         const { disconnectDB } = require('./config/database');
         await disconnectDB();
         if (env.NODE_ENV !== 'test') {
