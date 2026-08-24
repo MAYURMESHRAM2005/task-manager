@@ -396,7 +396,6 @@ function renderSidebar(activePage) {
     { section: 'Main' },
     { href: '/dashboard', icon: '📊', label: 'Dashboard' },
     { href: '/tasks', icon: '✅', label: 'My Tasks' },
-    { href: '/kanban', icon: '📋', label: 'Kanban Board' },
     { href: '/calendar', icon: '📅', label: 'Calendar' },
     { href: '/projects', icon: '📁', label: 'Projects' },
     { section: 'Collaborate' },

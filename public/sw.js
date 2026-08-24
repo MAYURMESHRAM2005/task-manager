@@ -5,7 +5,6 @@ const STATIC_ASSETS = [
   '/register',
   '/dashboard',
   '/tasks',
-  '/kanban',
   '/calendar',
   '/analytics',
   '/projects',
@@ -16,6 +15,7 @@ const STATIC_ASSETS = [
   '/admin',
   '/css/style.css',
   '/js/api.js',
+  '/js/chart.umd.min.js',
   '/manifest.json',
 ];
 

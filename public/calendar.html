@@ -36,6 +36,21 @@
     </div>
   </div>
 
+  <!-- Day Tasks Modal -->
+  <div class="modal-overlay" id="dayTasksModal">
+    <div class="modal" style="max-width:600px">
+      <div class="modal-header">
+        <h3 class="modal-title" id="dayTasksTitle">Tasks</h3>
+        <button class="modal-close" onclick="hideModal('dayTasksModal')">&times;</button>
+      </div>
+      <div id="dayTasksContent"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="hideModal('dayTasksModal')">Close</button>
+        <button class="btn btn-primary" id="addTaskForDayBtn">+ Add Task</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Create Task Modal -->
   <div class="modal-overlay" id="taskModal">
     <div class="modal">
@@ -79,7 +94,19 @@
     </div>
   </div>
 
+  <!-- Task Detail Modal -->
+  <div class="modal-overlay" id="detailModal">
+    <div class="modal" style="max-width:650px">
+      <div class="modal-header">
+        <h3 class="modal-title" id="detailTitle">Task Details</h3>
+        <button class="modal-close" onclick="hideModal('detailModal')">&times;</button>
+      </div>
+      <div id="detailContent"></div>
+    </div>
+  </div>
+
   <div class="toast-container"></div>
+  <script src="/socket.io/socket.io.js"></script>
   <script src="/js/api.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
@@ -89,6 +116,7 @@
     }
     if (!requireAuth()) throw new Error('Not authenticated');
     initTheme();
+    initSocket();
     document.getElementById('sidebar').innerHTML = renderSidebar('calendar');
     document.getElementById('topbar').innerHTML = renderTopbar('calendar');
     ensureSidebarOverlay();
@@ -96,6 +124,7 @@
 
     let currentDate = new Date();
     let calendarTasks = [];
+    let selectedDateStr = null;
 
     function changeMonth(delta) {
       currentDate.setMonth(currentDate.getMonth() + delta);
@@ -157,7 +186,7 @@
 
         html += `
           <div class="calendar-cell ${isToday ? 'today' : ''} ${isOtherMonth ? 'other-month' : ''}"
-               onclick="createTaskForDate('${dateStr}')">
+               onclick="showDayTasks('${dateStr}')">
             <div class="calendar-date">${current.getDate()}</div>
             ${dayTasks.slice(0, 3).map(t => `
               <div class="calendar-event ${t.status.toLowerCase().replace('_', '-')}" title="${escapeHtml(t.title)}">
@@ -173,9 +202,127 @@
       document.getElementById('calendarGrid').innerHTML = html;
     }
 
-    function createTaskForDate(dateStr) {
-      document.getElementById('taskDueDate').value = dateStr;
-      showModal('taskModal');
+    async function showDayTasks(dateStr) {
+      selectedDateStr = dateStr;
+      const date = new Date(dateStr + 'T00:00:00');
+      const formattedDate = date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+      document.getElementById('dayTasksTitle').textContent = formattedDate;
+
+      // Collect tasks due on this date
+      const dueTasks = calendarTasks.filter(t => t.dueDate && t.dueDate.split('T')[0] === dateStr);
+
+      // Also fetch tasks created on this date
+      let createdTasks = [];
+      try {
+        const startOfDay = new Date(dateStr + 'T00:00:00.000Z');
+        const endOfDay = new Date(dateStr + 'T23:59:59.999Z');
+        const result = await api.getTasks({
+          createdFrom: startOfDay.toISOString(),
+          createdTo: endOfDay.toISOString(),
+          limit: 50
+        });
+        createdTasks = (result.data?.tasks || []).filter(t => {
+          // Exclude tasks already in due list
+          return !dueTasks.find(d => d._id === t._id);
+        });
+      } catch { /* ignore */ }
+
+      let html = '';
+
+      if (dueTasks.length === 0 && createdTasks.length === 0) {
+        html = `
+          <div class="empty-state" style="padding:30px">
+            <div class="empty-icon">📅</div>
+            <h3>No tasks for this day</h3>
+            <p>Create a new task or check other dates.</p>
+          </div>
+        `;
+      } else {
+        if (dueTasks.length > 0) {
+          html += `<div style="margin-bottom:16px"><strong style="font-size:0.85rem;color:var(--text-secondary)">📌 Due on this day (${dueTasks.length})</strong></div>`;
+          html += `<ul class="day-tasks-list">`;
+          dueTasks.forEach(t => {
+            html += renderDayTaskItem(t, 'due');
+          });
+          html += `</ul>`;
+        }
+
+        if (createdTasks.length > 0) {
+          html += `<div style="margin-top:16px;margin-bottom:12px"><strong style="font-size:0.85rem;color:var(--text-secondary)">✨ Created on this day (${createdTasks.length})</strong></div>`;
+          html += `<ul class="day-tasks-list">`;
+          createdTasks.forEach(t => {
+            html += renderDayTaskItem(t, 'created');
+          });
+          html += `</ul>`;
+        }
+      }
+
+      document.getElementById('dayTasksContent').innerHTML = html;
+
+      // Set up "Add Task" button for this day
+      document.getElementById('addTaskForDayBtn').onclick = () => {
+        hideModal('dayTasksModal');
+        document.getElementById('taskDueDate').value = dateStr;
+        showModal('taskModal');
+      };
+
+      showModal('dayTasksModal');
+    }
+
+    function renderDayTaskItem(task, type) {
+      const statusMap = {
+        'TODO': 'badge-todo',
+        'IN_PROGRESS': 'badge-progress',
+        'REVIEW': 'badge-progress',
+        'COMPLETED': 'badge-completed',
+        'CANCELLED': 'badge-cancelled'
+      };
+      const priorityMap = {
+        'LOW': 'badge-low',
+        'MEDIUM': 'badge-medium',
+        'HIGH': 'badge-high',
+        'URGENT': 'badge-urgent'
+      };
+
+      return `
+        <li class="day-task-item" onclick="showTaskDetail('${task._id}')">
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+              <span class="day-task-type ${type}">${type}</span>
+              <span class="day-task-title">${escapeHtml(task.title)}</span>
+            </div>
+            <div class="day-task-meta">
+              <span class="badge ${statusMap[task.status] || ''}">${task.status.replace('_', ' ')}</span>
+              <span class="badge ${priorityMap[task.priority] || ''}">${task.priority}</span>
+              ${task.project ? `<span style="color:var(--text-muted)">📁 ${escapeHtml(task.project.name || '')}</span>` : ''}
+              ${task.assignedTo ? `<span style="color:var(--text-muted)">👤 ${escapeHtml(task.assignedTo.name || '')}</span>` : ''}
+            </div>
+          </div>
+        </li>
+      `;
+    }
+
+    async function showTaskDetail(taskId) {
+      try {
+        const result = await api.getTask(taskId);
+        const t = result.data.task;
+
+        document.getElementById('detailTitle').textContent = t.title;
+        document.getElementById('detailContent').innerHTML = `
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+            ${statusBadge(t.status)} ${priorityBadge(t.priority)}
+          </div>
+          ${t.description ? `<p style="color:var(--text-secondary);margin-bottom:16px">${escapeHtml(t.description)}</p>` : ''}
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;font-size:0.85rem">
+            <div><strong>Assignee:</strong> ${t.assignedTo ? escapeHtml(t.assignedTo.name) : 'Unassigned'}</div>
+            <div><strong>Due:</strong> ${formatDate(t.dueDate)}</div>
+            <div><strong>Project:</strong> ${t.project ? escapeHtml(t.project.name) : '—'}</div>
+            <div><strong>Created:</strong> ${formatDateTime(t.createdAt)}</div>
+          </div>
+        `;
+        showModal('detailModal');
+      } catch (err) { showToast(err.message, 'error'); }
     }
 
     async function loadProjects() {
@@ -211,6 +358,16 @@
         loadCalendar();
       } catch (err) { showToast(err.message, 'error'); }
     });
+
+    // Real-time update on new tasks
+    const s = getSocket();
+    if (s) {
+      s.on('notification', (data) => {
+        if (data && data.message) {
+          loadCalendar(); // Refresh calendar on changes
+        }
+      });
+    }
 
     loadProjects().then(() => loadCalendar());
   </script>
