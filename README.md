@@ -30,18 +30,21 @@ React frontend (frontend/)             Java backend (backend/)
 | Auth      | JWT + bcryptjs                  | JWT (jjwt) + BCrypt (strength 12)              |
 | Real-time | Socket.IO                       | Native WebSocket at `/ws`                      |
 | Build     | npm                             | Maven + Vite                                   |
+| CI/CD     | —                               | Jenkins pipeline (`Jenkinsfile`)               |
 
 ## Requirements
 
 - **Node.js 18+** (to build/run the React frontend)
-- **Java 17+** (JDK 17 or newer)
-- **Maven 3.8+**
+- **Java 17+** (JDK 17 or newer; also builds on JDK 21/23)
 - **MySQL 8+**
+- **Maven 3.8+** — *optional*: the Maven Wrapper is checked in, so no global install is needed
+- **Docker + Docker Compose** — *optional*, for the containerized setup
+- **Jenkins** — *optional*, for the CI/CD pipeline
 
 ## Repository layout
 
 ```
-taskflow/
+tasks-taskflow/
 ├── frontend/          # React + Vite single-page application
 │   ├── index.html     # Vite entry document
 │   ├── vite.config.js # dev server + /api and /ws proxy to the backend
@@ -54,15 +57,17 @@ taskflow/
 │   │   ├── context/        # AppProvider (user, unread count, logout)
 │   │   ├── components/     # AppLayout, Sidebar, Topbar, Modal, ChartCanvas, ...
 │   │   └── pages/          # Landing, Login, Dashboard, Tasks, Kanban, ...
-│   ├── Dockerfile     # builds the SPA and serves dist/ with nginx
+│   ├── Dockerfile     # multi-stage: npm ci && npm run build, served by nginx
 │   └── package.json
 ├── backend/           # Spring Boot application
 │   ├── pom.xml
+│   ├── mvnw, mvnw.cmd # Maven Wrapper (pinned Maven 3.9.9 in .mvn/)
+│   ├── Dockerfile     # multi-stage: mvn package → JRE 17 runtime
 │   └── src/main/java/com/taskflow/
 │       ├── TaskflowApplication.java
 │       ├── config/         # security, CORS, WebSocket, Jackson, seeder
 │       ├── controller/     # REST controllers
-│       ├── service/        # business logic
+│       ├── service/        # business logic (incl. TaskSchedulerService)
 │       ├── repository/     # Spring Data JPA repositories
 │       ├── entity/         # JPA entities + enums
 │       ├── dto/request|response/
@@ -70,10 +75,14 @@ taskflow/
 │       ├── security/       # JWT service, filter, entry point
 │       ├── socket/         # WebSocket handler + session registry
 │       └── util/
-├── docker-compose.yml
-├── nginx.conf
+├── .env.example       # backend environment template (copy to .env)
+├── docker-compose.yml # mysql + backend + frontend (nginx)
+├── nginx.conf         # static assets + /api and /ws reverse proxy
+├── Jenkinsfile        # CI/CD pipeline (build → test → image → deploy → health)
 └── README.md
 ```
+
+`.env`, `target/`, `dist/`, `node_modules/` and `*.log` are gitignored.
 
 ## 1. MySQL setup
 
@@ -95,6 +104,9 @@ DB_NAME=taskflow
 DB_USERNAME=root
 DB_PASSWORD=your_password
 ```
+
+Copy [`.env.example`](.env.example) to `.env` and fill it in — Spring picks it up, and
+`docker compose` reads the same file automatically.
 
 ## 2. Backend setup
 
@@ -154,12 +166,39 @@ npm run preview    # serves dist on http://localhost:4173
 ## 4. Docker
 
 ```bash
+cp .env.example .env    # set DB_PASSWORD, JWT_SECRET, JWT_REFRESH_SECRET
+docker compose up --build
+```
+
+Or without a `.env` file:
+
+```bash
 DB_PASSWORD=taskflow docker compose up --build
 ```
 
-This starts MySQL, the Spring Boot backend (port 8080) and an nginx container serving the built
-React app (port 80). The frontend image runs `npm ci && npm run build` in a Node stage, and
-`nginx.conf` proxies `/api` and `/ws` to the backend.
+This starts MySQL, the Spring Boot backend (port 8080) and an nginx container serving the
+built React app (port 80). The frontend image runs `npm ci && npm run build` in a Node stage,
+and `nginx.conf` proxies `/api` and `/ws` to the backend. Both containers have healthchecks
+(the backend polls `/api/v1/health`, MySQL uses `mysqladmin ping`), and MySQL data persists
+in the `mysql-data` volume.
+
+## 5. CI/CD (Jenkins)
+
+The [`Jenkinsfile`](Jenkinsfile) defines an 8-stage pipeline. Configure two tools in Jenkins
+(`jdk17` and `maven3`) and a Docker-enabled agent:
+
+| Stage | What it does |
+|-------|--------------|
+| Checkout | `checkout scm` |
+| Backend Build | `mvn -B -DskipTests clean package` |
+| Backend Tests | `mvn -B test`, results published via `junit` |
+| Frontend Build | `npm ci && npm run build` |
+| Build Docker Image | builds `taskflow-backend` and `taskflow-frontend`, tagged with build number, `latest` and the short commit |
+| Deploy | replaces the running `taskflow-backend` container on port 8080 |
+| Health Check | curls `/api/v1/health` and `/api/v1/ready` |
+| Post-Deployment Verification | confirms the container is up and prints image tags |
+
+On failure the pipeline stops and removes the backend container.
 
 ## Environment variables
 
@@ -170,6 +209,7 @@ React app (port 80). The frontend image runs `npm ci && npm run build` in a Node
 | `DB_HOST` / `DB_PORT` / `DB_NAME` | `localhost` / `3306` / `taskflow` | MySQL connection |
 | `DB_USERNAME` / `DB_PASSWORD` | `root` / *(empty)* | MySQL credentials |
 | `DDL_AUTO` | `update` | Hibernate schema strategy |
+| `SHOW_SQL` | `false` | Log SQL statements |
 | `JWT_SECRET` | dev default | Access-token signing key |
 | `JWT_REFRESH_SECRET` | dev default | Refresh-token signing key |
 | `JWT_EXPIRES_IN` | `900000` | Access token TTL (ms) |
@@ -177,6 +217,10 @@ React app (port 80). The frontend image runs `npm ci && npm run build` in a Node
 | `CORS_ORIGIN` | `http://localhost:5173,http://localhost:3000,http://localhost` | Allowed frontend origins |
 | `UPLOAD_DIR` | `uploads` | Attachment storage directory |
 | `APP_SEED_ENABLED` | `false` | Load demo data on startup |
+| `BACKEND_ORIGIN` | `http://localhost:8080` | Vite dev/preview proxy target (frontend only) |
+| `VITE_API_BASE_URL` | `/api/v1` | Absolute API base URL override (frontend only) |
+| `VITE_WS_URL` | *(page origin)* `/ws` | Absolute WebSocket URL override (frontend only) |
+| `PORT` | `5173` (dev) / `4173` (preview) | Vite server port |
 
 ## API
 
