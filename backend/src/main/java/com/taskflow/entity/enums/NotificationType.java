@@ -1,0 +1,15 @@
+package com.taskflow.entity.enums;
+
+public enum NotificationType {
+    TASK_ASSIGNED,
+    TASK_REASSIGNED,
+    TASK_COMPLETED,
+    TASK_DUE_SOON,
+    TASK_OVERDUE,
+    TASK_REMINDER,
+    PROJECT_MEMBER_ADDED,
+    TEAM_INVITATION,
+    COMMENT_ADDED,
+    ROLE_CHANGED,
+    ACCOUNT_DEACTIVATED
+}

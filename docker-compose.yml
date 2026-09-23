@@ -1,38 +1,63 @@
-version: "3.8"
-
 services:
-  taskflow-app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: taskflow-container
-    ports:
-      - "3000:3000"
+  mysql:
+    image: mysql:8.0
+    container_name: taskflow-mysql
     environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - MONGODB_URI=${MONGODB_URI}
-      - JWT_SECRET=${JWT_SECRET}
-      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-15m}
-      - JWT_REFRESH_EXPIRES_IN=${JWT_REFRESH_EXPIRES_IN:-7d}
-      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3000}
-    restart: unless-stopped
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-taskflow}
+      MYSQL_DATABASE: ${DB_NAME:-taskflow}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/v1/health"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DB_PASSWORD:-taskflow}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: taskflow-backend
+    ports:
+      - "8080:8080"
+    environment:
+      APP_ENV: production
+      SERVER_PORT: 8080
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-taskflow}
+      DB_USERNAME: root
+      DB_PASSWORD: ${DB_PASSWORD:-taskflow}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-make-it-long-and-random}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-me-too-in-production-make-it-long}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost,http://localhost:5173}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/v1/health"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 40s
+    restart: unless-stopped
 
-  nginx:
-    image: nginx:alpine
-    container_name: taskflow-nginx
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: taskflow-frontend
     ports:
       - "80:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      taskflow-app:
-        condition: service_healthy
+      backend:
+        condition: service_started
     restart: unless-stopped
+
+volumes:
+  mysql-data:

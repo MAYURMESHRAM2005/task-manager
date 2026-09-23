@@ -1,11 +1,28 @@
+# ─── Node / frontend ─────────────────────────────────────────────────────────
 node_modules/
-.env
-coverage/
-logs/
-.DS_Store
-*.log
+dist/
+.vite/
 npm-debug.log*
+
+# ─── Java / Maven backend ────────────────────────────────────────────────────
+target/
+*.class
+backend/uploads/
+uploads/
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# ─── Environment / secrets ───────────────────────────────────────────────────
+.env
+.env.local
+*.env
+
+# ─── Editors / OS ────────────────────────────────────────────────────────────
 .vscode/
 .idea/
-dist/
-build/
+*.iml
+.DS_Store
+
+# ─── Logs ────────────────────────────────────────────────────────────────────
+logs/
+*.log
